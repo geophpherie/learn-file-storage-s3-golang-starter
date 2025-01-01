@@ -3,7 +3,12 @@ package main
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -48,12 +53,22 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	mediaType := header.Header.Get("Content-Type")
-	imagedata, err := io.ReadAll(file)
+	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't read image", err)
+		respondWithError(w, http.StatusBadRequest, "Unknown media type", err)
 		return
 	}
+
+	if !slices.Contains([]string{"image/jpeg", "image/png"}, mediaType) {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid media type: %v", mediaType), nil)
+		return
+	}
+
+	// imagedata, err := io.ReadAll(file)
+	// if err != nil {
+	// 	respondWithError(w, http.StatusInternalServerError, "Couldn't read image", err)
+	// 	return
+	// }
 
 	metadata, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -61,19 +76,26 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fmt.Println(metadata.UserID)
-	fmt.Println(userID)
 	if metadata.UserID != userID {
 		respondWithError(w, http.StatusUnauthorized, "You don't own this video!", err)
 		return
 	}
 
-	videoThumbnails[videoID] = thumbnail{
-		data:      imagedata,
-		mediaType: mediaType,
-	}
+	extension := strings.Split(mediaType, "/")[1]
+	filename := videoID.String() + "." + extension
+	filepath := path.Join(".", "assets", filename)
 
-	thumbnailURL := fmt.Sprintf("http://localhost:8091/api/thumbnails/%v", videoID)
+	fmt.Println(filepath)
+	fsFile, err := os.Create(filepath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to create file", err)
+		return
+	}
+	io.Copy(fsFile, file)
+
+	// encodedImageData := base64.StdEncoding.EncodeToString(imagedata)
+	thumbnailURL := fmt.Sprintf("http://localhost:%v/assets/%v", cfg.port, filename)
+
 	video := database.Video{
 		ID:           videoID,
 		CreatedAt:    time.Now(),
