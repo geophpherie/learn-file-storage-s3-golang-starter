@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -38,7 +40,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	// TODO: implement the upload here
 	const maxMemory = 10 << 20
 
 	err = r.ParseMultipartForm(maxMemory)
@@ -52,6 +53,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "Couldn't parse thumbnail", err)
 		return
 	}
+	defer file.Close()
 
 	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
@@ -64,12 +66,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// imagedata, err := io.ReadAll(file)
-	// if err != nil {
-	// 	respondWithError(w, http.StatusInternalServerError, "Couldn't read image", err)
-	// 	return
-	// }
-
 	metadata, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Video metadata not found!", err)
@@ -81,11 +77,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	bytes := make([]byte, 32)
+	_, err = rand.Read(bytes)
+	if metadata.UserID != userID {
+		respondWithError(w, http.StatusInternalServerError, "Error storing file", err)
+		return
+	}
 	extension := strings.Split(mediaType, "/")[1]
-	filename := videoID.String() + "." + extension
+	filename := base64.RawURLEncoding.EncodeToString(bytes) + "." + extension
 	filepath := path.Join(".", "assets", filename)
 
-	fmt.Println(filepath)
 	fsFile, err := os.Create(filepath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Unable to create file", err)
@@ -98,7 +99,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	video := database.Video{
 		ID:           videoID,
-		CreatedAt:    time.Now(),
+		CreatedAt:    metadata.CreatedAt,
 		UpdatedAt:    time.Now(),
 		ThumbnailURL: &thumbnailURL,
 		VideoURL:     metadata.VideoURL,
